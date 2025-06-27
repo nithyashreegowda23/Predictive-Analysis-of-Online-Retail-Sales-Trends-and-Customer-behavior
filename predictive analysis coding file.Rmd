@@ -1,0 +1,1146 @@
+---
+title: "disseration"
+author: '30119304'
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# Load all required libraries (assumes they are already installed)
+library(readr)       
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(scales)
+library(caret)
+library(GGally)
+library(forecast)
+library(prophet)
+library(zoo)
+library(shiny)
+library(arules)
+library(arulesViz)
+library(Rtsne)
+library(tseries)
+library(forecast)
+
+```
+
+```{r}
+# Load the dataset
+df <- read_csv("C:/Users/dell/OneDrive - University of South Wales/Desktop/DESERTATION/TATA Online Retail Dataset/Online Retail Data Set.csv")
+
+# View structure
+str(df)
+
+# View first few rows
+head(df)
+```
+```{r}
+# Count missing values per column
+colSums(is.na(df))
+```
+```{r}
+# Remove rows with missing CustomerID or Description
+df_clean <- df %>%
+  filter(!is.na(CustomerID), !is.na(Description))
+
+# Check again
+colSums(is.na(df_clean))
+```
+```{r}
+library(readr)
+library(dplyr)
+library(lubridate)
+
+# Step 1: Load dataset with InvoiceDate as character
+df <- read_csv("C:/Users/dell/OneDrive - University of South Wales/Desktop/DESERTATION/TATA Online Retail Dataset/Online Retail Data Set.csv",
+               col_types = cols(InvoiceDate = col_character()))
+
+# Step 2: Remove rows with missing CustomerID or Description
+df <- df %>%
+  filter(!is.na(CustomerID), !is.na(Description))
+
+# ✅ Step 3: Check for negative values (optional but informative)
+cat("Negative Quantities: ", sum(df$Quantity < 0), "\n")
+cat("Negative Prices: ", sum(df$UnitPrice < 0), "\n")
+
+# Step 4: Remove negative Quantity and UnitPrice values
+df <- df %>%
+  filter(Quantity > 0, UnitPrice > 0)
+
+# Step 5: Parse InvoiceDate to POSIXct
+df <- df %>%
+  mutate(InvoiceDate = parse_date_time(InvoiceDate, orders = "dmy HM"))
+
+# Step 6: Add TotalPrice column
+df <- df %>%
+  mutate(TotalPrice = Quantity * UnitPrice)
+
+# Step 7: Remove duplicate rows
+df <- df %>%
+  distinct()
+
+# Step 8: Check structure and preview
+str(df)
+head(df)
+```
+```{r}
+library(stringr)
+library(dplyr)
+
+# Fix encoding first
+df$Description <- df$Description %>%
+  iconv(from = "latin1", to = "UTF-8", sub = "") %>%  # removes problematic chars
+  tolower() %>%
+  str_trim() %>%
+  str_replace_all("[[:punct:]]", "")  # optional punctuation removal
+
+#Identify returns (InvoiceNo starting with 'C')
+returns_df <- df %>%
+  filter(str_starts(InvoiceNo, "C"))
+
+# If you want to exclude returns from main dataset
+df <- df %>%
+  filter(!str_starts(InvoiceNo, "C"))
+# View cleaned product descriptions
+head(df$Description, 10)
+
+# Confirm number of returns removed
+nrow(returns_df)
+
+# Confirm number of remaining rows
+nrow(df)
+
+```
+```{r}
+# Full clean again (if needed)
+df_clean <- read_csv("C:/Users/dell/OneDrive - University of South Wales/Desktop/DESERTATION/TATA Online Retail Dataset/Online Retail Data Set.csv", col_types = cols(InvoiceDate = col_character())) %>%
+  filter(!is.na(CustomerID), !is.na(Description)) %>%
+  filter(Quantity > 0, UnitPrice > 0) %>%
+  mutate(
+    InvoiceDate = parse_date_time(InvoiceDate, orders = "dmy HM"),
+    TotalPrice = Quantity * UnitPrice,
+    Description = iconv(Description, from = "latin1", to = "UTF-8", sub = "") %>%
+                  tolower() %>%
+                  str_trim() %>%
+                  str_replace_all("[[:punct:]]", "")
+  ) %>%
+  filter(!str_starts(InvoiceNo, "C")) %>%
+  distinct()
+str(df_clean)
+summary(df_clean$InvoiceDate)
+
+```
+```{r}
+df_clean <- df_clean %>%
+  mutate(TotalPrice = Quantity * UnitPrice)
+```
+```{r}
+glimpse(df)
+summary(df$TotalPrice)
+```
+#EDA
+```{r}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(scales)
+```
+```{r}
+##Analyze Sales Patterns
+
+### 5.1 Top-Selling Products by Revenue
+# Load necessary library
+library(dplyr)
+library(ggplot2)
+
+# Group by product Description and calculate total revenue
+top_products <- df %>%
+  group_by(Description) %>%
+  summarise(TotalRevenue = sum(TotalPrice, na.rm = TRUE)) %>%
+  arrange(desc(TotalRevenue)) %>%
+  slice_head(n = 10)  # Top 10 products
+
+# View top products
+print(top_products)
+
+# Plot top-selling products
+ggplot(top_products, aes(x = reorder(Description, TotalRevenue), y = TotalRevenue, fill = Description)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  labs(title = "Top 10 Products by Revenue",
+       x = "Product Description",
+       y = "Total Revenue (£)") +
+  theme_minimal()
+
+```
+#Total Sales Per Month/Year
+```{r}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+
+# Create a Year-Month column as Date (not POSIXct)
+df_monthly <- df %>%
+  mutate(YearMonth = as.Date(floor_date(InvoiceDate, "month"))) %>%
+  group_by(YearMonth) %>%
+  summarise(MonthlyRevenue = sum(TotalPrice, na.rm = TRUE)) %>%
+  arrange(YearMonth)
+
+# Plot total sales per month
+ggplot(df_monthly, aes(x = YearMonth, y = MonthlyRevenue)) +
+  geom_line(color = "steelblue", size = 1.2) +
+  geom_point(color = "darkred", size = 2) +
+  labs(title = "Total Sales Per Month",
+       x = "Month",
+       y = "Total Revenue (£)") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+###Number of Transactions Per Day/Week/Month
+```{r}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+
+# Daily Transactions
+transactions_daily <- df %>%
+  mutate(Date = as.Date(InvoiceDate)) %>%
+  group_by(Date) %>%
+  summarise(Transactions = n_distinct(InvoiceNo))
+
+# Plot Daily
+ggplot(transactions_daily, aes(x = Date, y = Transactions)) +
+  geom_line(color = "steelblue") +
+  labs(title = "Daily Number of Transactions",
+       x = "Date",
+       y = "Transactions") +
+  theme_minimal()
+
+# Weekly Transactions
+transactions_weekly <- df %>%
+  mutate(Week = floor_date(InvoiceDate, "week")) %>%
+  group_by(Week) %>%
+  summarise(Transactions = n_distinct(InvoiceNo))
+
+# Plot Weekly
+ggplot(transactions_weekly, aes(x = Week, y = Transactions)) +
+  geom_line(color = "darkgreen") +
+  labs(title = "Weekly Number of Transactions",
+       x = "Week",
+       y = "Transactions") +
+  theme_minimal()
+
+# Monthly Transactions
+transactions_monthly <- df %>%
+  mutate(Month = floor_date(InvoiceDate, "month")) %>%
+  group_by(Month) %>%
+  summarise(Transactions = n_distinct(InvoiceNo))
+
+# Plot Monthly
+ggplot(transactions_monthly, aes(x = Month, y = Transactions)) +
+  geom_line(color = "darkorange") +
+  geom_point(color = "red") +
+  labs(title = "Monthly Number of Transactions",
+       x = "Month",
+       y = "Transactions") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#Basket Size Per Month (Trend Over Time)
+```{r}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+
+# Calculate average basket size per month
+basket_monthly <- df %>%
+  mutate(Month = floor_date(InvoiceDate, "month")) %>%
+  group_by(Month) %>%
+  summarise(
+    TotalQuantity = sum(Quantity),
+    Transactions = n_distinct(InvoiceNo),
+    AvgBasketSize = TotalQuantity / Transactions
+  )
+
+# Plot average basket size trend
+ggplot(basket_monthly, aes(x = Month, y = AvgBasketSize)) +
+  geom_line(color = "purple", size = 1.2) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Average Basket Size per Month",
+       x = "Month",
+       y = "Average Items per Transaction") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+###Top 10 Frequently Bought Products
+
+```{r top-frequent-products}
+df %>%
+  group_by(Description) %>%
+  summarise(TotalQuantity = sum(Quantity)) %>%
+  arrange(desc(TotalQuantity)) %>%
+  head(10) %>%
+  ggplot(aes(x = reorder(Description, TotalQuantity), y = TotalQuantity)) +
+  geom_col(fill = "darkgreen") +
+  coord_flip() +
+  labs(title = "Top 10 Frequently Bought Products", x = "Product Description", y = "Quantity Sold")
+```
+
+###Low-Selling / Non-Moving Items
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Summarise product performance
+low_selling_items <- df %>%
+  group_by(Description) %>%
+  summarise(
+    TotalQuantity = sum(Quantity, na.rm = TRUE),
+    TotalRevenue = sum(TotalPrice, na.rm = TRUE)
+  ) %>%
+  arrange(TotalRevenue)  # ascending order = lowest selling
+
+# View bottom 10 items by revenue
+head(low_selling_items, 10)
+```
+```{r}
+bottom_items_plot <- low_selling_items %>%
+  slice_head(n = 10)  # bottom 10 items
+
+ggplot(bottom_items_plot, aes(x = reorder(Description, TotalRevenue), y = TotalRevenue)) +
+  geom_bar(stat = "identity", fill = "tomato") +
+  coord_flip() +
+  labs(title = "Bottom 10 Products by Revenue",
+       x = "Product Description",
+       y = "Total Revenue (£)") +
+  theme_minimal()
+```
+
+
+## customer Geography
+
+###Total Sales Per Country
+
+```{r sales-by-country}
+df %>%
+  group_by(Country) %>%
+  summarise(TotalSales = sum(TotalPrice)) %>%
+  arrange(desc(TotalSales)) %>%
+  head(10) %>%
+  ggplot(aes(x = reorder(Country, TotalSales), y = TotalSales)) +
+  geom_col(fill = "tomato") +
+  coord_flip() +
+  labs(title = "Top 10 Countries by Total Sales", x = "Country", y = "Total Sales")
+```
+
+###Average Revenue Per Customer by Country
+
+```{r avg-revenue-country}
+df %>%
+  group_by(Country, CustomerID) %>%
+  summarise(CustomerRevenue = sum(TotalPrice)) %>%
+  group_by(Country) %>%
+  summarise(AvgRevenuePerCustomer = mean(CustomerRevenue)) %>%
+  arrange(desc(AvgRevenuePerCustomer)) %>%
+  head(10) %>%
+  ggplot(aes(x = reorder(Country, AvgRevenuePerCustomer), y = AvgRevenuePerCustomer)) +
+  geom_col(fill = "purple") +
+  coord_flip() +
+  labs(title = "Top 10 Countries by Avg Revenue per Customer", x = "Country", y = "Average Revenue")
+```
+## advanced EDA
+
+###Univariate Analysis: Distribution of Purchase Amounts
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Plot histogram and density of TotalPrice
+ggplot(df, aes(x = TotalPrice)) +
+  geom_histogram(binwidth = 5, fill = "skyblue", color = "black", alpha = 0.7) +
+  geom_density(aes(y = ..density.. * 5), color = "darkblue", size = 1.2) +
+  labs(title = "Distribution of Purchase Amounts (TotalPrice)",
+       x = "Purchase Amount (£)",
+       y = "Frequency / Density") +
+  xlim(0, 200) +  # Focus on typical purchase values (filter out extreme outliers)
+  theme_minimal()
+```
+
+###Bivariate Analysis: Sales by Country and Product
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Step 1: Identify top 5 countries by total revenue (excluding UK if needed)
+top_countries <- df %>%
+  group_by(Country) %>%
+  summarise(TotalRevenue = sum(TotalPrice)) %>%
+  arrange(desc(TotalRevenue)) %>%
+  slice_head(n = 5) %>%
+  pull(Country)  # extract country names
+
+# Step 2: Filter dataset for only those top countries
+df_top_countries <- df %>%
+  filter(Country %in% top_countries)
+
+# Step 3: Aggregate revenue by Country and Product
+sales_by_country_product <- df_top_countries %>%
+  group_by(Country, Description) %>%
+  summarise(TotalRevenue = sum(TotalPrice), .groups = "drop")
+
+# Step 4: Get top 3 products for each country
+top_products_by_country <- sales_by_country_product %>%
+  group_by(Country) %>%
+  slice_max(order_by = TotalRevenue, n = 3) %>%
+  ungroup()
+
+# Step 5: Plot
+ggplot(top_products_by_country, aes(x = reorder(Description, TotalRevenue), y = TotalRevenue, fill = Country)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ Country, scales = "free", ncol = 1) +
+  coord_flip() +
+  labs(title = "Top 3 Products by Revenue in Top 5 Countries",
+       x = "Product Description",
+       y = "Total Revenue (£)") +
+  theme_minimal()
+```
+
+###Correlation Heatmap
+```{r}
+library(dplyr)
+library(corrplot)
+
+# Select only relevant numeric columns
+numeric_df <- df %>%
+  select(Quantity, UnitPrice, TotalPrice)
+
+# Compute correlation matrix
+cor_matrix <- cor(numeric_df, use = "complete.obs")
+
+# Plot the correlation heatmap with gradient color
+corrplot(cor_matrix,
+         method = "color",           # Use colored squares
+         type = "upper",             # Show upper triangle only
+         tl.col = "black",           # Text label color
+         tl.srt = 45,                # Rotate labels
+         addCoef.col = "black",      # Show correlation values
+         number.cex = 0.8,           # Size of correlation labels
+         col = colorRampPalette(c("red", "white", "blue"))(200),  # Gradient from red to blue
+         title = "Correlation Heatmap",
+         mar = c(0, 0, 1, 0))        # Adjust margin for title
+
+
+```
+#Figure: Correlation heatmap of key sales metrics. Strong correlation exists between Quantity and TotalPrice, while UnitPrice shows low or no correlation with other metrics.
+
+###Time-Based Patterns: Weekly Sales
+```{r}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+
+# Group sales by week (convert to Date)
+weekly_sales <- df %>%
+  mutate(Week = as.Date(floor_date(InvoiceDate, unit = "week"))) %>%
+  group_by(Week) %>%
+  summarise(WeeklyRevenue = sum(TotalPrice, na.rm = TRUE)) %>%
+  arrange(Week)
+
+# Plot weekly sales trend
+ggplot(weekly_sales, aes(x = Week, y = WeeklyRevenue)) +
+  geom_line(color = "steelblue", size = 1.2) +
+  geom_point(color = "darkred", size = 1.5) +
+  labs(title = "Weekly Sales Trend",
+       x = "Week",
+       y = "Total Revenue (£)") +
+  scale_x_date(date_labels = "%b %d", date_breaks = "1 month") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+###Product Affinity (Association Rules - placeholder)
+```{r}
+library(dplyr)
+library(arules)
+library(arulesViz)
+
+# Step 1: Prepare transaction list
+transactions_list <- df %>%
+  select(InvoiceNo, Description) %>%
+  distinct() %>%  # Remove duplicate items per transaction
+  group_by(InvoiceNo) %>%
+  summarise(items = list(as.character(Description)), .groups = "drop") %>%
+  pull(items)
+
+# Step 2: Convert to transactions object
+transaction_data <- as(transactions_list, "transactions")
+
+# Step 3: Generate rules
+rules <- apriori(transaction_data, 
+                 parameter = list(supp = 0.001, conf = 0.3, target = "rules"))
+
+# Step 4: View top 10 rules by lift
+inspect(head(sort(rules, by = "lift"), 10))
+
+# Step 5 (Optional): Visualize
+plot(rules, method = "graph", engine = "htmlwidget")
+
+```
+#Top 10 Association Rules with Details
+```{r}
+# Ensure arules is loaded
+library(arules)
+
+# Get top 10 rules sorted by lift
+top_rules <- head(sort(rules, by = "lift"), 10)
+
+# Inspect them nicely
+inspect(top_rules)
+```
+```{r}
+library(arulesViz)
+
+# Assuming your rules are stored in 'rules'
+plot(rules, method = "graph", engine = "htmlwidget")
+```
+```{r}
+# Convert rules to data frame
+rules_df <- as(top_rules, "data.frame")
+
+# Save to CSV
+write.csv(rules_df, "top_association_rules.csv", row.names = FALSE)
+```
+###Visualization Examples
+```{r box-scatter-visuals}
+# Boxplot of TotalPrice by Country (limited to top 5 countries)
+top_countries <- df %>%
+  count(Country, sort = TRUE) %>%
+  top_n(5) %>%
+  pull(Country)
+
+df %>%
+  filter(Country %in% top_countries) %>%
+  ggplot(aes(x = Country, y = TotalPrice)) +
+  geom_boxplot(fill = "orange") +
+  coord_flip() +
+  ylim(0, quantile(df$TotalPrice, 0.99)) +
+  labs(title = "Boxplot of Purchase Amounts by Country")
+```
+#MODULES
+#Customer Behaviour & Segmentation 
+
+###RFM Analysis: Score Customers
+```{r}
+library(dplyr)
+library(lubridate)
+
+# Step 1: Set the reference date
+snapshot_date <- max(df$InvoiceDate) + days(1)
+
+# Step 2: Calculate raw RFM metrics
+rfm_raw <- df %>%
+  group_by(CustomerID) %>%
+  summarise(
+    Recency = as.numeric(snapshot_date - max(InvoiceDate)),  # Days since last purchase
+    Frequency = n_distinct(InvoiceNo),                       # Unique purchases
+    Monetary = sum(TotalPrice),                              # Total spend
+    .groups = "drop"
+  )
+
+# Step 3: Assign RFM scores (1–5)
+rfm_scored <- rfm_raw %>%
+  mutate(
+    R_score = ntile(-Recency, 5),   # Recent = higher score (negative for reverse rank)
+    F_score = ntile(Frequency, 5),  # More orders = higher score
+    M_score = ntile(Monetary, 5)    # Higher spend = higher score
+  ) %>%
+  mutate(
+    RFM_Score = paste0(R_score, F_score, M_score)
+  )
+# View top 10 customers with highest RFM score
+head(rfm_scored, 10)
+
+```
+###Assign RFM Scores and Create Segments
+```{r}
+# step 1 Add segment labels based on RFM scores
+rfm_scored <- rfm_scored %>%
+  mutate(Segment = case_when(
+    R_score == 5 & F_score == 5 & M_score == 5 ~ "Champion",
+    R_score >= 4 & F_score >= 4               ~ "Loyal Customers",
+    R_score == 5 & F_score <= 2               ~ "New Customers",
+    R_score <= 2 & F_score >= 4               ~ "At Risk Loyalists",
+    R_score <= 2 & F_score <= 2 & M_score <= 2 ~ "Lost",
+    TRUE                                       ~ "Others"
+  ))
+library(ggplot2)
+
+ggplot(rfm_scored, aes(x = Segment, fill = Segment)) +
+  geom_bar() +
+  labs(title = "Customer Segments Based on RFM Scores", x = "Segment", y = "Number of Customers") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+###Clustering: Feature Selection and Normalization
+```{r}
+# Select RFM Features for Clustering
+# Select only relevant numeric RFM features
+rfm_features <- rfm_scored %>%
+  select(Recency, Frequency, Monetary)
+# Normalize the RFM values
+rfm_scaled <- scale(rfm_features)
+
+# Optional: Check the structure
+summary(rfm_scaled)
+
+```
+###Determine Optimal Clusters (Elbow Method)
+```{r}
+set.seed(123)  # For reproducibility
+wcss <- vector()
+
+# Loop through k = 1 to 10
+for (k in 1:10) {
+  kmeans_result <- kmeans(rfm_scaled, centers = k, nstart = 25)
+  wcss[k] <- kmeans_result$tot.withinss
+}
+library(ggplot2)
+
+elbow_df <- data.frame(Clusters = 1:10, WCSS = wcss)
+
+ggplot(elbow_df, aes(x = Clusters, y = WCSS)) +
+  geom_point(size = 3, color = "red") +
+  geom_line(color = "steelblue", size = 1) +
+  labs(title = "Elbow Method for Optimal Number of Clusters",
+       x = "Number of Clusters (k)",
+       y = "Within-Cluster Sum of Squares") +
+  theme_minimal()
+
+```
+
+###Apply K-Means Clustering and Visualize
+```{r}
+set.seed(123)  # For reproducibility
+
+# Apply k-means clustering with k = 4
+kmeans_model <- kmeans(rfm_scaled, centers = 4, nstart = 25)
+
+# Add cluster assignments to the original RFM data
+rfm_clustered <- rfm_scored %>%
+  mutate(Cluster = as.factor(kmeans_model$cluster))
+library(ggplot2)
+
+ggplot(rfm_clustered, aes(x = Recency, y = Monetary, color = Cluster)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(title = "Customer Segments by K-Means Clustering",
+       x = "Recency (days since last purchase)",
+       y = "Monetary (Total Spend £)",
+       color = "Cluster") +
+  theme_minimal()
+
+```
+
+###Visualize Clusters Using PCA
+```{r}
+# Run PCA on scaled RFM data
+pca_result <- prcomp(rfm_scaled, center = TRUE, scale. = TRUE)
+
+# Add PCA results to your clustered RFM data
+pca_data <- as.data.frame(pca_result$x[, 1:2])  # Take only PC1 and PC2
+pca_data$Cluster <- rfm_clustered$Cluster
+library(ggplot2)
+
+ggplot(pca_data, aes(x = PC1, y = PC2, color = Cluster)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(title = "Customer Segments Visualized by PCA",
+       x = "Principal Component 1",
+       y = "Principal Component 2") +
+  theme_minimal()
+
+```
+```{r}
+centers <- as.data.frame(kmeans_model$centers)
+centers_pca <- predict(pca_result, newdata = centers)
+
+ggplot(pca_data, aes(x = PC1, y = PC2,
+color = Cluster)) +geom_point(alpha = 0.7) +geom_point(data = as.data.frame(centers_pca[, 1:2]), 
+      aes(x = PC1, y = PC2), color = "black", size = 4, shape = 8) +
+  labs(title = "Clusters with PCA (including centers)")
+```
+
+##Define Customer Personas
+```{r}
+rfm_clustered %>%
+  group_by(Cluster) %>%
+  summarise(
+    Count = n(),
+    Avg_Recency = round(mean(Recency), 1),
+    Avg_Frequency = round(mean(Frequency), 1),
+    Avg_Monetary = round(mean(Monetary), 2)
+  ) %>%
+  arrange(Cluster)
+```
+
+
+## Hierarchical Clustering and Dendrogram
+```{r}
+# Euclidean distance matrix
+dist_matrix <- dist(rfm_scaled, method = "euclidean")
+# Apply hierarchical clustering using Ward's method
+hc_model <- hclust(dist_matrix, method = "ward.D2")
+# Basic dendrogram
+plot(hc_model,
+     labels = FALSE,
+     hang = -1,
+     main = "Hierarchical Clustering Dendrogram (RFM Customers)",
+     xlab = NULL,
+     sub = NULL,
+     cex = 0.6)
+# Cut into 4 clusters and show boundaries
+rect.hclust(hc_model, k = 4, border = "red")
+
+```
+
+##Visualize Clusters with t-SNE
+```{r}
+library(Rtsne)
+```
+```{r}
+set.seed(123)
+
+# Run t-SNE
+tsne_result <- Rtsne(rfm_scaled, dims = 2, perplexity = 30, verbose = TRUE, max_iter = 500)
+
+# Create dataframe for plotting
+tsne_df <- data.frame(
+  X = tsne_result$Y[,1],
+  Y = tsne_result$Y[,2],
+  Cluster = rfm_clustered$Cluster  # use K-means clusters here
+)
+library(ggplot2)
+
+ggplot(tsne_df, aes(x = X, y = Y, color = Cluster)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(title = "Customer Segments Visualized by t-SNE",
+       x = "t-SNE Dimension 1",
+       y = "t-SNE Dimension 2") +
+  theme_minimal()
+```
+```{r}
+# Set CRAN mirror and install treemap
+options(repos = c(CRAN = "https://cran.r-project.org"))
+install.packages("treemap")
+
+```
+```{r}
+
+library(treemap)
+
+# Example data (replace with your actual RFM segment revenue data)
+rfm_summary <- data.frame(
+  Segment = c("Champions", "Loyal", "At Risk", "Hibernating"),
+  CustomerCount = c(200, 1200, 400, 2200),
+  Revenue = c(50000, 150000, 30000, 40000)
+)
+
+# Treemap based on revenue
+treemap(
+  rfm_summary,
+  index = "Segment",
+  vSize = "Revenue",
+  vColor = "Revenue",
+  type = "value",
+  palette = "Blues",
+  title = "Treemap of Revenue by Customer Segment"
+)
+```
+```{r}
+# Install required packages
+# install.packages("ggplot2")
+# install.packages("reshape2")
+
+library(ggplot2)
+library(reshape2)
+
+# Normalize data for heatmap
+rfm_melt <- melt(rfm_summary, id.vars = "Segment")
+rfm_melt$value <- ave(rfm_melt$value, rfm_melt$variable, FUN = function(x) x / max(x))
+
+# Heatmap
+ggplot(rfm_melt, aes(x = variable, y = Segment, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(value, 2)), color = "black", size = 4) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  labs(title = "Heatmap of Segment Metrics (Normalized)", x = "", y = "") +
+  theme_minimal()
+```
+
+###Predictive Modeling (Customer Behavior Prediction)
+
+###Define Target and Feature Engineering
+```{r}
+# Define churn as Recency > 90 days
+rfm_model <- rfm_clustered %>%
+  mutate(Churn = ifelse(Recency > 90, 1, 0)) %>%
+  select(Recency, Frequency, Monetary, Churn)
+
+```
+
+###Split Data for Modeling
+```{r}
+set.seed(123)
+train_index <- createDataPartition(rfm_model$Churn, p = 0.7, list = FALSE)
+train_data <- rfm_model[train_index, ]
+test_data <- rfm_model[-train_index, ]
+
+```
+
+### 12.3 Train Logistic Regression Model
+```{r}
+# Scale numeric features
+train_data_scaled <- train_data
+test_data_scaled <- test_data
+
+train_data_scaled[, 1:3] <- scale(train_data_scaled[, 1:3])
+test_data_scaled[, 1:3] <- scale(test_data_scaled[, 1:3])
+
+# Fit logistic regression model
+logit_model <- glm(Churn ~ Recency + Frequency + Monetary, 
+                   data = train_data_scaled, family = binomial)
+
+summary(logit_model)
+
+```
+# Use a Tree-Based Model
+```{r}
+library(randomForest)
+```
+```{r}
+set.seed(123)
+
+# Fit random forest model
+rf_model <- randomForest(as.factor(Churn) ~ Recency + Frequency + Monetary,
+                         data = train_data,
+                         importance = TRUE,
+                         ntree = 500)
+
+# Predict on test data
+rf_pred <- predict(rf_model, newdata = test_data)
+confusionMatrix(rf_pred, as.factor(test_data$Churn))
+```
+
+```{r}
+varImpPlot(rf_model, main = "Feature Importance - Random Forest")
+```
+###Evaluate Logistic Regression Model
+```{r}
+# Predict on test data
+pred_probs <- predict(logit_model, newdata = test_data, type = "response")
+pred_labels <- ifelse(pred_probs > 0.5, 1, 0)
+
+# Confusion matrix
+conf_matrix <- confusionMatrix(as.factor(pred_labels), as.factor(test_data$Churn))
+print(conf_matrix)
+
+# AUC ROC
+library(pROC)
+roc_curve <- roc(test_data$Churn, pred_probs)
+auc(roc_curve)
+plot(roc_curve, main = "ROC Curve - Logistic Regression")
+
+```
+#ogistic regression failed to distinguish between churned and active customers, with an AUC near 0.50, indicating no better performance than random guessing. A tree-based model (Random Forest) was used instead, which demonstrated strong predictive performance and meaningful feature importance.
+
+```{r}
+coef_df <- as.data.frame(summary(logit_model)$coefficients)
+coef_df$Feature <- rownames(coef_df)
+
+ggplot(coef_df[-1, ], aes(x = Feature, y = Estimate)) +  # skip intercept
+  geom_col(fill = "skyblue") +
+  labs(title = "Logistic Regression Coefficients", y = "Estimate") +
+  theme_minimal()
+```
+###Feature Importance Plot
+```{r}
+# Extract coefficients
+library(ggplot2)
+coef_df <- as.data.frame(coef(summary(logit_model)))
+coef_df$Feature <- rownames(coef_df)
+coef_df <- coef_df[-1, ]  # Remove intercept
+names(coef_df)[1] <- "Estimate"
+
+# Plot
+ggplot(coef_df, aes(x = reorder(Feature, Estimate), y = Estimate)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Feature Importance (Logistic Regression)",
+       x = "Feature",
+       y = "Coefficient Estimate") +
+  theme_minimal()
+
+```
+#Logistic regression yielded misleadingly high importance for Recency due to its use in both feature set and churn label definition. This violates model independence assumptions and results in data leakage. A Random Forest model using Frequency and Monetary features only was adopted to overcome this and better generalize customer churn prediction.
+
+##Time Series Forecasting (e.g., Sales/Demand Prediction)
+```{r}
+df$InvoiceDateParsed <- as.POSIXct(df$InvoiceDate, format = "%Y-%m-%d %H:%M:%S")
+```
+
+###Monthly Sales Series & Stationarity Check
+```{r ts-stationarity, message=FALSE}
+library(tseries)
+library(forecast)
+
+monthly_sales <- df %>%
+  mutate(Month = floor_date(InvoiceDateParsed, "month")) %>%
+  group_by(Month) %>%
+  summarise(Sales = sum(TotalPrice))
+
+# Convert to time series
+sales_ts <- ts(monthly_sales$Sales, frequency = 12, start = c(year(min(monthly_sales$Month)), month(min(monthly_sales$Month))))
+
+# Plot and ADF test
+plot(sales_ts, main = "Monthly Sales Time Series")
+adf.test(sales_ts)
+```
+
+###ARIMA Forecasting
+```{r ts-sarima-forecast}
+# Fit SARIMA model (with seasonality)
+sarima_model <- auto.arima(sales_ts, seasonal = TRUE)
+summary(sarima_model)
+
+# Forecast next 6 months
+sarima_fc <- forecast(sarima_model, h = 6)
+plot(sarima_fc, main = "SARIMA Forecast")
+```
+#Forecast Evaluation (Train/Test Split)
+```{r ts-eval}
+# Train/test split
+train_ts <- window(sales_ts, end = c(2011, 9))
+test_ts <- window(sales_ts, start = c(2011, 10))
+
+model <- auto.arima(train_ts)
+forecasted <- forecast(model, h = length(test_ts))
+
+# Accuracy metrics
+accuracy(forecasted, test_ts)
+```
+### Prophet Forecast
+```{r ts-prophet, message=FALSE, warning=FALSE}
+install.packages("prophet")
+
+library(prophet)
+
+# Prepare data for Prophet
+prophet_data <- monthly_sales %>%
+  rename(ds = Month, y = Sales)
+
+# Fit model
+prophet_model <- prophet(prophet_data)
+
+# Create future dataframe
+future <- make_future_dataframe(prophet_model, periods = 6, freq = "month")
+
+# Forecast
+prophet_forecast <- predict(prophet_model, future)
+
+# Plot forecast
+plot(prophet_model, prophet_forecast) +
+  ggtitle("Prophet Forecast: Monthly Sales")
+```
+###SARIMA Model
+```{r ts-sarima}
+# Fit SARIMA model (with seasonality)
+sarima_model <- auto.arima(sales_ts, seasonal = TRUE)
+summary(sarima_model)
+
+# Forecast next 6 months
+sarima_fc <- forecast(sarima_model, h = 6)
+plot(sarima_fc, main = "SARIMA Forecast")
+```
+### Forecast Accuracy Comparison Table
+```{r}
+start(sales_ts)
+end(sales_ts)
+```
+
+
+### Forecast Accuracy Comparison Table
+```{r forecast-comparison}
+library(forecast)
+library(knitr)
+
+# ARIMA model (non-seasonal)
+arima_model <- auto.arima(train_ts, seasonal = FALSE)
+arima_forecast <- forecast(arima_model, h = length(test_ts))
+arima_acc <- accuracy(arima_forecast, test_ts)
+
+# SARIMA model (seasonal)
+sarima_model <- auto.arima(train_ts, seasonal = TRUE)
+sarima_forecast <- forecast(sarima_model, h = length(test_ts))
+sarima_acc <- accuracy(sarima_forecast, test_ts)
+
+# Prophet model
+prophet_data <- monthly_sales %>% rename(ds = Month, y = Sales)
+prophet_model <- prophet(prophet_data, verbose = FALSE)
+future <- make_future_dataframe(prophet_model, periods = 6, freq = "month")
+prophet_forecast <- predict(prophet_model, future)
+
+# Extract actual & forecast for last 3 months
+actual_values <- tail(monthly_sales$Sales, 3)
+predicted_values <- tail(prophet_forecast$yhat, 3)
+prophet_rmse <- sqrt(mean((predicted_values - actual_values)^2))
+prophet_mape <- mean(abs((predicted_values - actual_values) / actual_values)) * 100
+
+# Build comparison table
+comparison_table <- data.frame(
+  Model = c("ARIMA", "SARIMA", "Prophet"),
+  RMSE = round(c(arima_acc[2, "RMSE"], sarima_acc[2, "RMSE"], prophet_rmse), 2),
+  MAPE = round(c(arima_acc[2, "MAPE"], sarima_acc[2, "MAPE"], prophet_mape), 2)
+)
+
+kable(comparison_table, caption = "Forecast Accuracy Comparison: ARIMA vs SARIMA vs Prophet")
+```
+### Plot Actual vs Forecasted
+### Forecast Plot: Actual vs ARIMA, SARIMA, Prophet
+```{r forecast-combined-plot}
+# Ensure required data frames are created beforehand
+actuals <- data.frame(Date = as.Date(as.yearmon(time(test_ts))), Value = as.numeric(test_ts), Type = "Actual")
+pred_arima <- data.frame(Date = as.Date(as.yearmon(time(arima_forecast$mean))), Value = as.numeric(arima_forecast$mean), Type = "ARIMA Forecast")
+pred_sarima <- data.frame(Date = as.Date(as.yearmon(time(sarima_forecast$mean))), Value = as.numeric(sarima_forecast$mean), Type = "SARIMA Forecast")
+prophet_plot_data <- prophet_forecast %>%
+  select(ds, yhat) %>%
+  rename(Date = ds, Value = yhat) %>%
+  mutate(Date = as.Date(Date), Type = "Prophet Forecast") %>%
+  filter(Date %in% actuals$Date)
+
+# Combine into single frame
+combined_df <- bind_rows(actuals, pred_arima, pred_sarima, prophet_plot_data)
+
+# Plot
+ggplot(combined_df, aes(x = Date, y = Value, color = Type, linetype = Type)) +
+  geom_line(size = 1) +
+  labs(title = "Actual vs Forecasted Sales (ARIMA, SARIMA, Prophet)",
+       x = "Date", y = "Sales") +
+  scale_linetype_manual(values = c("Actual" = "solid", 
+                                   "ARIMA Forecast" = "dashed", 
+                                   "SARIMA Forecast" = "twodash", 
+                                   "Prophet Forecast" = "dotted")) +
+  theme_minimal() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b-%Y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+```{r ts-sarima-1}
+# Fit SARIMA model (with seasonality)
+sarima_model <- auto.arima(sales_ts, seasonal = TRUE)
+summary(sarima_model)
+
+# Forecast next 6 months
+sarima_fc <- forecast(sarima_model, h = 6)
+plot(sarima_fc, main = "SARIMA Forecast")
+```
+###Model Validation and Business Interpretation
+
+### Model Assumptions & Overfitting Checks
+```{r}
+# Check residuals for ARIMA model
+checkresiduals(arima_model)
+
+# For SARIMA
+checkresiduals(sarima_model)
+
+```
+
+`
+###Visualization & Dashboarding
+
+###Dashboard Concepts
+Use tools such as **Shiny (R)**, **Power BI**, **Tableau**, or **Dash (Python)** to build interactive dashboards.
+
+### Dashboard Components
+- **Sales Trends**: Use `monthly_sales` or `weekly_sales` data from Step 5 and 8.4.
+- **Customer Segments**: Visualize RFM clusters or t-SNE outputs from Step 9.6/9.9.
+- **Predictive Scores**: Display churn scores from Step 12 per customer.
+- **Filters**: Enable filtering by:
+  - Product Category (from Description/StockCode)
+  - Time period (Date or InvoiceDateParsed)
+  - Country or Region
+
+###Optional Shiny App Starter
+```{r}
+# app.R
+library(shiny)
+library(ggplot2)
+library(dplyr)
+
+ui <- fluidPage(
+  titlePanel("Online Retail Sales Dashboard"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("country", "Select Country:", choices = unique(df$Country)),
+      dateRangeInput("daterange", "Select Date Range:",
+                     start = min(df$InvoiceDate),
+                     end = max(df$InvoiceDate))
+    ),
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Sales Over Time", plotOutput("salesPlot")),
+        tabPanel("Customer Segments", plotOutput("segmentPlot")),
+        tabPanel("Churn Prediction", tableOutput("churnTable"))
+      )
+    )
+  )
+)
+
+server <- function(input, output) {
+  
+  filtered_data <- reactive({
+    df %>%
+      filter(Country == input$country,
+             InvoiceDate >= input$daterange[1],
+             InvoiceDate <= input$daterange[2])
+  })
+  
+  output$salesPlot <- renderPlot({
+    filtered_data() %>%
+      mutate(Month = as.Date(cut(InvoiceDate, "month"))) %>%
+      group_by(Month) %>%
+      summarise(Sales = sum(TotalPrice)) %>%
+      ggplot(aes(x = Month, y = Sales)) +
+      geom_line(color = "steelblue") +
+      labs(title = "Monthly Sales", x = "Month", y = "Total Sales (£)")
+  })
+  
+  output$segmentPlot <- renderPlot({
+    ggplot(rfm_scored, aes(x = Frequency, y = Monetary, color = as.factor(R_score))) +
+      geom_point() +
+      labs(title = "Customer Segmentation (RFM)", color = "Recency Score")
+  })
+  
+  output$churnTable <- renderTable({
+    head(train_data_scaled, 10)
+  })
+}
+
+shinyApp(ui, server)
+```
+

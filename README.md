@@ -10,14 +10,14 @@ Evaluate model performance using appropriate metrics
 
 Derive actionable insights to support business or research objectives
 
-📊 Key Components:
+ Key Components:
 Data Cleaning and Transformation
 
 Exploratory Data Analysis (EDA)
 
 Feature Engineering
 
-Predictive Modeling (e.g., Logistic Regression, Random Forest, XGBoost)
+Predictive Modeling (e.g., Logistic Regression, Random Forest)
 
 Time Series Forecasting (e.g., ARIMA, SARIMA, Prophet)
 
